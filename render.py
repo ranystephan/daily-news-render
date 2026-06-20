@@ -11,11 +11,12 @@ Preview offline:     python render.py --selftest     (uses sample data, no netwo
 """
 
 import os
+import re
 import sys
+import glob
 import json
 import html
 import socket
-import re
 import datetime
 import urllib.request
 from zoneinfo import ZoneInfo
@@ -39,6 +40,9 @@ MAX_CHARS = {"World": 92, "Research": 92, "Markets": 92}
 
 # Max characters for a Research takeaway line (the italic "deck" under the title).
 NOTE_CHARS = 150
+
+# Max characters of body text shown on a per-story "card" image.
+BODY_CHARS = 540
 
 # News feeds: (url, short source label). Listed best-first; failures are skipped.
 WORLD_FEEDS = [
@@ -99,6 +103,12 @@ def _clean(text, limit):
     return text
 
 
+def _strip_html(s):
+    """Remove tags/entities from an RSS summary, collapse whitespace."""
+    s = re.sub(r"<[^>]+>", " ", s or "")
+    return " ".join(html.unescape(s).split())
+
+
 def fetch_news(feeds, limit, char_limit):
     """Pull recent entries across feeds, newest first, de-duplicated by title."""
     collected = []
@@ -108,12 +118,15 @@ def fetch_news(feeds, limit, char_limit):
         except Exception:
             continue
         for e in parsed.entries[:12]:
-            title = _clean(getattr(e, "title", ""), char_limit)
+            full = " ".join((getattr(e, "title", "") or "").split())
+            title = _clean(full, char_limit)
             if not title:
                 continue
             ts = getattr(e, "published_parsed", None) or getattr(e, "updated_parsed", None)
             ts = datetime.datetime(*ts[:6]) if ts else datetime.datetime.min
-            collected.append({"title": title, "meta": label.upper(), "ts": ts})
+            body = _strip_html(getattr(e, "summary", "") or getattr(e, "description", ""))
+            collected.append({"title": title, "full": full, "meta": label.upper(),
+                              "ts": ts, "body": body})
 
     collected.sort(key=lambda x: x["ts"], reverse=True)
     out, seen = [], set()
@@ -136,7 +149,8 @@ def fetch_research_pool(char_limit):
         return []
     pool, seen = [], set()
     for e in parsed.entries:
-        title = _clean(getattr(e, "title", ""), char_limit)
+        full = " ".join((getattr(e, "title", "") or "").split())
+        title = _clean(full, char_limit)
         if not title:
             continue
         key = title.lower()[:40]
@@ -151,7 +165,7 @@ def fetch_research_pool(char_limit):
             cat = e.tags[0].get("term", "")
         meta = f"ARXIV · {cat.upper()}" if cat else "ARXIV"
         abstract = " ".join((getattr(e, "summary", "") or "").split())
-        pool.append({"title": title, "meta": meta, "abstract": abstract})
+        pool.append({"title": title, "full": full, "meta": meta, "abstract": abstract})
         if len(pool) >= RESEARCH_POOL:
             break
     return pool
@@ -272,21 +286,46 @@ def select_research(limit, char_limit):
 # ----------------------------------------------------------------------------
 SAMPLE = {
     "World": [
-        {"title": "Ceasefire talks resume as both sides signal cautious openness", "meta": "REUTERS"},
-        {"title": "Record flooding displaces thousands across the river delta", "meta": "BBC"},
+        {"title": "Ceasefire talks resume as both sides signal cautious openness", "meta": "REUTERS",
+         "body": "Negotiators returned to the table after a week-long pause, with mediators describing the mood as "
+                 "guardedly constructive. Both delegations agreed to a narrow agenda focused on prisoner exchanges "
+                 "and humanitarian corridors before any discussion of a wider political settlement."},
+        {"title": "Record flooding displaces thousands across the river delta", "meta": "BBC",
+         "body": "Relentless monsoon rains pushed the river past its highest recorded level, submerging low-lying "
+                 "districts and forcing mass evacuations. Officials warned that crop losses could deepen food prices "
+                 "for months as relief teams struggle to reach cut-off villages."},
     ],
     "Research": [
         {"title": "Adaptive step-size methods for stochastic convex optimization", "meta": "ARXIV · MATH.OC",
-         "note": "A line-search-free schedule that matches hand-tuned learning rates and removes the main knob practitioners dread."},
+         "note": "A line-search-free schedule that matches hand-tuned learning rates and removes the main knob practitioners dread.",
+         "abstract": "We propose an adaptive step-size rule for stochastic convex optimization that requires no "
+                     "line search and no prior knowledge of the smoothness constant. The method matches the "
+                     "convergence rate of optimally-tuned SGD across a range of problems while eliminating the "
+                     "learning-rate hyperparameter, and we provide high-probability guarantees under heavy-tailed noise."},
         {"title": "A diffusion prior for calibrating implied volatility surfaces", "meta": "ARXIV · Q-FIN.CP",
-         "note": "Learns an arbitrage-free vol surface from sparse quotes, beating SVI on out-of-sample repricing."},
+         "note": "Learns an arbitrage-free vol surface from sparse quotes, beating SVI on out-of-sample repricing.",
+         "abstract": "We train a diffusion model as a prior over implied volatility surfaces and use it to calibrate "
+                     "to sparse, noisy option quotes. The resulting surfaces are static-arbitrage-free by construction "
+                     "and reprice held-out strikes more accurately than SVI and SSVI baselines, especially in the wings."},
         {"title": "Low-rank attention reduces inference cost in long-context LLMs", "meta": "ARXIV · CS.LG",
-         "note": "Cuts attention FLOPs ~3x at 128k context with under 1% quality loss, no retraining needed."},
+         "note": "Cuts attention FLOPs ~3x at 128k context with under 1% quality loss, no retraining needed.",
+         "abstract": "We show that attention matrices in long-context transformers are approximately low-rank and "
+                     "introduce a training-free factorization that cuts attention FLOPs by roughly three times at a "
+                     "128k context window. Across reasoning and retrieval benchmarks the quality drop stays under one percent."},
     ],
     "Markets": [
-        {"title": "Futures edge higher ahead of inflation print as yields slip", "meta": "WSJ"},
-        {"title": "Oil steadies after a volatile week; gold holds near a record", "meta": "MARKETWATCH"},
-        {"title": "Fed minutes point to a slower path on rate cuts", "meta": "FED"},
+        {"title": "Futures edge higher ahead of inflation print as yields slip", "meta": "WSJ",
+         "body": "Stock-index futures pointed to a firmer open as Treasury yields eased and traders positioned for a "
+                 "key inflation reading. A softer print would bolster the case for rate cuts later this year, though "
+                 "strategists cautioned that a hot number could quickly reverse the move."},
+        {"title": "Oil steadies after a volatile week; gold holds near a record", "meta": "MARKETWATCH",
+         "body": "Crude prices stabilized after sharp swings driven by supply worries and shifting demand forecasts, "
+                 "while gold hovered just below its all-time high as investors sought a hedge against policy "
+                 "uncertainty and a softer dollar."},
+        {"title": "Fed minutes point to a slower path on rate cuts", "meta": "FED",
+         "body": "Minutes from the latest policy meeting showed officials in no hurry to ease, citing sticky services "
+                 "inflation and resilient labor data. Several participants favored holding rates steady until they saw "
+                 "clearer evidence that price pressures were durably returning to target."},
     ],
 }
 
@@ -380,22 +419,87 @@ def build_html(sections, now):
             .replace("__SECTIONS__", "\n".join(blocks)))
 
 
+# A single-story "card" — one per item, for the rotating album.
+DETAIL_TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f6f3ea; --ink:#181511; --soft:#4b443a; --muted:#8a8073;
+    --rule:rgba(24,21,17,0.24); --hair:rgba(24,21,17,0.13);
+    --serif:"Newsreader",Georgia,"Times New Roman",serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:__W__px;height:__H__px;}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);
+       overflow:hidden;-webkit-font-smoothing:antialiased;}
+  .clockzone{height:__CLOCKPX__px;}
+  .story{height:calc(__H__px - __CLOCKPX__px);padding:0 86px 150px;overflow:hidden;}
+  .kicker{font-family:var(--mono);font-weight:500;font-size:24px;letter-spacing:5px;
+          text-transform:uppercase;color:var(--ink);
+          padding-bottom:16px;border-bottom:2.5px solid var(--ink);margin-bottom:30px;}
+  .story-hl{font-weight:700;font-size:78px;line-height:1.08;letter-spacing:-1px;color:var(--ink);}
+  .story-deck{font-style:italic;font-weight:400;font-size:42px;line-height:1.3;
+              color:var(--soft);margin-top:24px;}
+  .story-rule{height:1.5px;background:var(--rule);margin:38px 0;}
+  .story-body{font-weight:400;font-size:39px;line-height:1.46;color:var(--ink);}
+  .story-foot{font-family:var(--mono);font-weight:500;font-size:22px;letter-spacing:2px;
+              text-transform:uppercase;color:var(--muted);
+              margin-top:40px;padding-top:20px;border-top:1px solid var(--hair);}
+</style></head>
+<body>
+  <div class="clockzone"></div>
+  <div class="story">
+    <div class="kicker">__KICKER__</div>
+    <h1 class="story-hl">__TITLE__</h1>
+    __DECK__
+    <div class="story-rule"></div>
+    __BODY__
+    <div class="story-foot">__FOOT__</div>
+  </div>
+</body></html>"""
+
+
+def build_detail_html(section, it, now):
+    deck = it.get("note") or ""
+    body = _strip_html(it.get("body") or it.get("abstract") or "")
+    if len(body) > BODY_CHARS:
+        body = body[: BODY_CHARS - 1].rstrip(" ,.;:—-") + "…"
+    deck_html = f'<div class="story-deck">{html.escape(deck)}</div>' if deck else ""
+    body_html = f'<div class="story-body">{html.escape(body)}</div>' if body else ""
+    foot = f'{it.get("meta", "")} · {now.strftime("%A, %B %-d").upper()}'
+    return (DETAIL_TEMPLATE
+            .replace("__W__", str(WIDTH))
+            .replace("__H__", str(HEIGHT))
+            .replace("__CLOCKPX__", str(int(HEIGHT * CLOCK_ZONE)))
+            .replace("__KICKER__", html.escape(section.upper()))
+            .replace("__TITLE__", html.escape(it.get("full") or it["title"]))
+            .replace("__DECK__", deck_html)
+            .replace("__BODY__", body_html)
+            .replace("__FOOT__", html.escape(foot)))
+
+
 # ----------------------------------------------------------------------------
 # Render
 # ----------------------------------------------------------------------------
-def render_png(html_str, out):
+def render_pages(jobs):
+    """jobs: list of (html_str, out_path). One shared browser renders every page."""
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--no-sandbox"])
-        page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT},
-                                device_scale_factor=1)
-        page.set_content(html_str, wait_until="networkidle")
-        try:
-            page.evaluate("document.fonts.ready")
-        except Exception:
-            pass
-        page.wait_for_timeout(500)
-        page.screenshot(path=out, clip={"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT})
+        for html_str, out in jobs:
+            page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT},
+                                    device_scale_factor=1)
+            page.set_content(html_str, wait_until="networkidle")
+            try:
+                page.evaluate("document.fonts.ready")
+            except Exception:
+                pass
+            page.wait_for_timeout(400)
+            page.screenshot(path=out, clip={"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT})
+            page.close()
         browser.close()
 
 
@@ -404,7 +508,8 @@ def main():
     now = datetime.datetime.now(ZoneInfo(TIMEZONE))
 
     if selftest:
-        sections = [(k, SAMPLE[k][: ITEMS[k]]) for k in ("World", "Research", "Markets")]
+        sections = [(k, [dict(x) for x in SAMPLE[k][: ITEMS[k]]])
+                    for k in ("World", "Research", "Markets")]
     else:
         sections = [
             ("World",    fetch_news(WORLD_FEEDS,   ITEMS["World"],   MAX_CHARS["World"])),
@@ -412,15 +517,29 @@ def main():
             ("Markets",  fetch_news(MARKETS_FEEDS, ITEMS["Markets"], MAX_CHARS["Markets"])),
         ]
 
-    html_str = build_html(sections, now)
+    # Drop yesterday's cards so the album never accumulates stale stories.
+    for f in glob.glob("card-*.png"):
+        os.remove(f)
+
+    # Page 1: the overview. Pages 2..N: one story card per item, in reading order.
+    jobs = [(build_html(sections, now), OUTPUT)]
+    manifest = [OUTPUT]
+    for name, items in sections:
+        for it in items:
+            out = f"card-{len(manifest):02d}.png"
+            jobs.append((build_detail_html(name, it, now), out))
+            manifest.append(out)
+
     with open("headlines.html", "w") as f:
-        f.write(html_str)
-    print("Wrote headlines.html")
+        f.write(jobs[0][0])
 
     if "--html-only" in sys.argv:
         return
-    render_png(html_str, OUTPUT)
-    print(f"Wrote {OUTPUT}")
+
+    render_pages(jobs)
+    with open("manifest.json", "w") as f:
+        json.dump({"date": now.strftime("%Y-%m-%d"), "images": manifest}, f, indent=2)
+    print(f"Wrote {len(jobs)} images + manifest.json")
 
 
 if __name__ == "__main__":

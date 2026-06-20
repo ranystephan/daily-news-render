@@ -34,10 +34,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Commit image
+      - name: Commit images
         run: |
           git config user.name  "headline-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add headlines.png
+          git add -A headlines.png "card-*.png" manifest.json
           git commit -m "Update headlines $(date -u +%F)" || echo "No changes"
           git push
