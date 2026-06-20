@@ -1,0 +1,43 @@
+name: Daily headline wallpaper
+
+on:
+  schedule:
+    # 13:00 UTC daily ≈ 6:00 AM US Pacific. Change to suit your timezone.
+    # (GitHub cron is always in UTC.)
+    - cron: "0 13 * * *"
+  workflow_dispatch:        # adds a manual "Run workflow" button
+
+permissions:
+  contents: write           # lets the job commit the image back to the repo
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Render wallpaper
+        run: python render.py
+        env:
+          # Optional: add either as a repo Actions secret to turn on AI relevance
+          # ranking for the Research section. If unset, both are empty and the job
+          # safely falls back to newest-first — nothing breaks.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Commit image
+        run: |
+          git config user.name  "headline-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add headlines.png
+          git commit -m "Update headlines $(date -u +%F)" || echo "No changes"
+          git push
