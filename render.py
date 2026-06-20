@@ -30,7 +30,6 @@ TIMEZONE = "America/Los_Angeles"     # your local zone (used for the date/time s
 WIDTH, HEIGHT = 1320, 2868           # iPhone 17 Pro Max, in pixels
 CLOCK_ZONE = 0.20                    # top fraction left empty for the iOS clock
 OUTPUT = "headlines.png"
-NAMEPLATE = "The Daily Brief"        # masthead title at the top of the page
 
 # How many items to show per section (tune to taste / fit).
 ITEMS = {"World": 2, "Research": 3, "Markets": 3}
@@ -41,8 +40,8 @@ MAX_CHARS = {"World": 92, "Research": 92, "Markets": 92}
 # Max characters for a Research takeaway line (the italic "deck" under the title).
 NOTE_CHARS = 150
 
-# Max characters of body text shown on a per-story "card" image.
-BODY_CHARS = 540
+# Max characters of summary text shown on a per-story "card" image.
+BODY_CHARS = 1100
 
 # News feeds: (url, short source label). Listed best-first; failures are skipped.
 WORLD_FEEDS = [
@@ -242,23 +241,34 @@ def _ai_rank(titles, n):
         return None
 
 
-def _ai_takeaways(items):
-    """One crisp takeaway per paper (title+abstract), or None if no API key / failure."""
+def _ai_research(items):
+    """Per paper: a one-line deck + a 3-4 sentence plain-English summary.
+
+    Returns a list of {"deck", "summary"} in order, or None if no API key / failure.
+    """
     prompt = (
-        "For each paper below write ONE sharp sentence (max 20 words) stating its key "
-        "result or why it matters, for a quant / applied-math reader. Be concrete — name "
-        "the method or finding. No fluff, do not start with 'This paper' or 'The authors'.\n\n"
-        + "\n\n".join(f"{i}. {it['title']}\nAbstract: {it.get('abstract', '')[:700]}"
+        "You write a daily research brief for this reader:\n"
+        f"{INTEREST_DESCRIPTION}\n\n"
+        "For each paper below produce an object with two fields:\n"
+        '  "deck": ONE sharp sentence (max 18 words) — the hook / why it matters.\n'
+        '  "summary": 3-4 plain-English sentences covering what they did, the method, the '
+        "key result (with any concrete numbers), and why a quant / applied-math reader "
+        "should care. Be specific; name the technique. Do not start with 'This paper' or "
+        "'The authors', and do not just restate the title.\n\n"
+        + "\n\n".join(f"[{i}] {it['title']}\nAbstract: {it.get('abstract', '')[:1300]}"
                       for i, it in enumerate(items))
-        + "\n\nReturn ONLY a JSON array of strings, one per paper, in the same order."
+        + '\n\nReturn ONLY a JSON array of objects, same order: '
+          '[{"deck": "...", "summary": "..."}, ...]'
     )
-    text = _chat(prompt, 400)
+    text = _chat(prompt, 1100)
     if not text:
         return None
     try:
         start, end = text.find("["), text.rfind("]")
         arr = json.loads(text[start:end + 1])
-        return [s for s in arr if isinstance(s, str)]
+        out = [{"deck": str(o.get("deck", "")), "summary": str(o.get("summary", ""))}
+               for o in arr if isinstance(o, dict)]
+        return out or None
     except Exception:
         return None
 
@@ -273,11 +283,14 @@ def select_research(limit, char_limit):
     else:
         picked = pool[:limit]   # fallback: newest
 
-    notes = _ai_takeaways(picked)   # None without an API key
+    briefs = _ai_research(picked)   # None without an API key
     for i, it in enumerate(picked):
-        note = notes[i] if notes and i < len(notes) else None
-        note = _clean(note, NOTE_CHARS) if note else _first_sentences(it.get("abstract", ""), NOTE_CHARS)
-        it["note"] = note
+        b = briefs[i] if briefs and i < len(briefs) else {}
+        deck = b.get("deck", "").strip()
+        summ = b.get("summary", "").strip()
+        # Deck = one-line hook (front page). Summary = the full card body.
+        it["note"] = _clean(deck, NOTE_CHARS) if deck else _first_sentences(it.get("abstract", ""), NOTE_CHARS)
+        it["summary"] = summ or it.get("abstract", "")
     return picked
 
 
@@ -340,7 +353,7 @@ TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
   :root{
     --paper:#f6f3ea; --ink:#181511; --soft:#4b443a; --muted:#8a8073;
-    --rule:rgba(24,21,17,0.24); --hair:rgba(24,21,17,0.13);
+    --hair:rgba(24,21,17,0.13);
     --serif:"Newsreader",Georgia,"Times New Roman",serif;
     --mono:"IBM Plex Mono",ui-monospace,monospace;
   }
@@ -354,35 +367,28 @@ TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8">
   .clockzone{height:__CLOCKPX__px;}
   .feed{
     height:calc(__H__px - __CLOCKPX__px);
-    padding:0 86px 150px;overflow:hidden;
+    padding:0 84px 120px;overflow:hidden;
   }
-  .nameplate{
-    text-align:center;font-weight:700;font-size:104px;line-height:.96;
-    letter-spacing:-1.5px;padding-bottom:22px;
+  .masthead{
+    display:flex;align-items:baseline;justify-content:space-between;
+    padding-bottom:18px;border-bottom:2px solid var(--ink);
   }
-  .dateline{
-    text-align:center;font-family:var(--mono);font-size:22px;letter-spacing:3px;
-    text-transform:uppercase;color:var(--soft);padding:13px 0;
-    border-top:2.5px solid var(--ink);border-bottom:1px solid var(--ink);
-  }
-  .section{margin-top:42px;}
-  .section-head{
-    text-align:center;font-weight:700;font-size:29px;letter-spacing:7px;
-    text-transform:uppercase;color:var(--ink);
-    padding-bottom:13px;margin-bottom:4px;border-bottom:1.5px solid var(--rule);
-  }
-  .item{padding:23px 0;border-top:1px solid var(--hair);}
-  .item:first-of-type{border-top:none;}
-  .hl{font-weight:600;font-size:49px;line-height:1.17;color:var(--ink);letter-spacing:-0.3px;}
-  .note{font-style:italic;font-weight:400;font-size:35px;line-height:1.34;color:var(--soft);margin-top:11px;}
-  .meta{font-family:var(--mono);font-weight:500;font-size:21px;letter-spacing:2px;
-        text-transform:uppercase;color:var(--muted);margin-top:13px;}
+  .masthead .date{font-weight:600;font-size:46px;color:var(--ink);}
+  .masthead .upd{font-family:var(--mono);font-size:21px;letter-spacing:2px;
+                 text-transform:uppercase;color:var(--muted);}
+  .eyebrow{font-family:var(--mono);font-weight:500;font-size:23px;letter-spacing:5px;
+           text-transform:uppercase;color:var(--soft);margin:32px 0 2px;}
+  .item{padding:17px 0;border-top:1px solid var(--hair);}
+  .eyebrow + .item{border-top:none;}
+  .hl{font-weight:600;font-size:47px;line-height:1.16;letter-spacing:-0.3px;color:var(--ink);}
+  .note{font-style:italic;font-weight:400;font-size:31px;line-height:1.3;color:var(--soft);margin-top:8px;}
+  .meta{font-family:var(--mono);font-weight:500;font-size:20px;letter-spacing:2px;
+        text-transform:uppercase;color:var(--muted);margin-top:9px;}
 </style></head>
 <body>
   <div class="clockzone"></div>
   <div class="feed">
-    <div class="nameplate">__NAME__</div>
-    <div class="dateline">__DATE__ &nbsp;·&nbsp; __UPD__</div>
+    <div class="masthead"><span class="date">__DATE__</span><span class="upd">__UPD__</span></div>
 __SECTIONS__
   </div>
 </body></html>"""
@@ -391,7 +397,7 @@ __SECTIONS__
 def build_html(sections, now):
     blocks = []
     for name, items in sections:
-        rows = [f'<div class="section"><div class="section-head">{html.escape(name)}</div>']
+        rows = [f'<div class="eyebrow">{html.escape(name)}</div>']
         if not items:
             rows.append('<div class="item"><div class="hl">No items available right now.</div></div>')
         for it in items:
@@ -404,16 +410,14 @@ def build_html(sections, now):
                 f'<div class="meta">{html.escape(it["meta"])}</div>'
                 '</div>'
             )
-        rows.append('</div>')
         blocks.append("\n".join(rows))
 
-    date_str = now.strftime("%A, %B %-d").upper()
+    date_str = now.strftime("%A, %B %-d")
     upd_str = "UPDATED " + now.strftime("%-I:%M %p").upper()
     return (TEMPLATE
             .replace("__W__", str(WIDTH))
             .replace("__H__", str(HEIGHT))
             .replace("__CLOCKPX__", str(int(HEIGHT * CLOCK_ZONE)))
-            .replace("__NAME__", html.escape(NAMEPLATE))
             .replace("__DATE__", html.escape(date_str))
             .replace("__UPD__", html.escape(upd_str))
             .replace("__SECTIONS__", "\n".join(blocks)))
@@ -464,7 +468,7 @@ DETAIL_TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8">
 
 def build_detail_html(section, it, now):
     deck = it.get("note") or ""
-    body = _strip_html(it.get("body") or it.get("abstract") or "")
+    body = _strip_html(it.get("summary") or it.get("body") or it.get("abstract") or "")
     if len(body) > BODY_CHARS:
         body = body[: BODY_CHARS - 1].rstrip(" ,.;:—-") + "…"
     deck_html = f'<div class="story-deck">{html.escape(deck)}</div>' if deck else ""
