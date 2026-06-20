@@ -1,9 +1,17 @@
 # Daily headline lock-screen wallpaper
 
-Generates a wallpaper PNG every morning with three sections — **World**, **Research**
-(newest arXiv papers in ML / control / optimization / numerical / quant finance), and
-**Markets** — sized for the iPhone 17 Pro Max (1320 × 2868). A GitHub Action renders and
-commits the image daily; an iOS Shortcut downloads it and sets your lock screen.
+Generates a small **album** of newspaper-style pages every morning, sized for the
+iPhone 17 Pro Max (1320 × 2868):
+
+- `headlines.png` — the front page: **World**, **Research** (arXiv: ML / control /
+  optimization / numerical / quant finance), and **Markets**.
+- `card-01.png … card-NN.png` — one full single-story page per item (headline, deck,
+  body text). Research cards carry a takeaway + the paper's abstract.
+- `manifest.json` — the ordered list of today's images, read by the iOS Shortcut.
+
+A GitHub Action renders and commits these daily. On the phone, an iOS Shortcut refreshes
+a Photos album from the manifest each morning, and a **Photo Shuffle** lock screen sourced
+from that album lets you tap through the day's stories.
 
 ---
 
@@ -28,17 +36,19 @@ commits the image daily; an iOS Shortcut downloads it and sets your lock screen.
 4. **Generate the first image:** open the **Actions** tab → *Daily headline wallpaper* →
    **Run workflow**. After ~1–2 min a `headlines.png` appears in the repo. Open it to check.
 
-5. **Your image URL** (this is what the phone uses — stable, never changes):
+5. **Your base URL** (stable, never changes — the phone reads the manifest from here):
    ```
-   https://raw.githubusercontent.com/<YOUR-USERNAME>/<YOUR-REPO>/main/headlines.png
+   https://raw.githubusercontent.com/<YOUR-USERNAME>/<YOUR-REPO>/main/
    ```
+   The manifest lives at `…/main/manifest.json`; each image is `…/main/<name>` from its
+   `images` list (e.g. `…/main/headlines.png`, `…/main/card-01.png`).
 
 ### Adjust to taste (all near the top of `render.py`)
 - `TIMEZONE` — set to your zone, e.g. `"America/New_York"`, so the date/time stamp is right.
 - `ITEMS` — headlines per section, e.g. `{"World": 2, "Research": 3, "Markets": 3}`.
 - `ARXIV_CATS` — add/remove arXiv categories for the Research section.
 - `WORLD_FEEDS` / `MARKETS_FEEDS` — swap in any RSS feeds you prefer.
-- Cron time is in **`.github/workflows/daily.yml`** and is **UTC**. `0 10 * * *` ≈ 6 AM ET.
+- Cron time is in **`.github/workflows/daily.yml`** and is **UTC**. `0 13 * * *` ≈ 6 AM PT.
 
 ### Research ranking — newest vs. AI-relevance (optional)
 By default the Research section shows the **newest** papers across your arXiv categories —
@@ -63,31 +73,51 @@ Edit `INTEREST_DESCRIPTION` in `render.py` to steer what "relevant" means.
 
 ---
 
-## Part B — iPhone Shortcut (one-time, ~3 min)
+## Part B — iPhone album that rotates daily
 
-**1. Build the shortcut**
-- Open **Shortcuts → +** (new shortcut). Name it **Headline Wallpaper**.
-- Add action **Get Contents of URL**. Paste your image URL from step A5. Leave method **GET**.
-- Add action **Set Wallpaper**:
-  - Set the image to the **Contents of URL** output.
-  - Tap to expand options → turn **Show Preview OFF**.
-  - Choose **Lock Screen** (and Home Screen too if you want).
+The phone keeps a Photos album in sync with the manifest each morning, and a **Photo
+Shuffle** lock screen sourced from that album lets you tap through the day's stories.
 
-**2. Automate it daily**
-- Go to the **Automation** tab → **+** → **Create Personal Automation**.
-- Trigger **Time of Day** → e.g. **7:00 AM** → **Daily** → Next.
-- Action **Run Shortcut** → pick **Headline Wallpaper** → Next.
-- Turn **Ask Before Running OFF** → confirm **Don't Ask** → Done.
+**1. Create the album**
+- **Photos → Albums → +  → New Album** → name it **Daily Brief**. Leave it empty.
 
-Schedule the phone time a bit **after** the GitHub cron so the fresh image is ready
-(e.g. cron 6 AM ET → phone 7 AM).
+**2. Build the refresh shortcut**
+- **Shortcuts → +** → name it **Daily Brief Refresh**. Add these actions in order:
+  1. **Text** → `https://raw.githubusercontent.com/<YOUR-USERNAME>/<YOUR-REPO>/main/`
+     (your base URL from A5). Tap the field, this is your `BASE`.
+  2. **Find Photos** → Album **is** Daily Brief. (Clears yesterday.)
+  3. **Delete Photos** → input = Photos from step 2. *(Run once manually to grant the
+     “delete” permission; afterward it’s silent.)*
+  4. **Get Contents of URL** → `BASE` + `manifest.json`.
+  5. **Get Dictionary Value** → Get **Value** for **images** in (Contents of URL).
+  6. **Repeat with Each** (item = the images list):
+     - **Text** → `BASE` + **Repeat Item**.
+     - **Get Contents of URL** → that Text.
+     - **Save to Photo Album** → album **Daily Brief**.
+  7. (end Repeat)
+
+**3. Automate it daily**
+- **Shortcuts → Automation → +  → Create Personal Automation.**
+- **Time of Day** → e.g. **7:00 AM** → **Daily** → Next. (After the GitHub cron — cron is
+  6 AM PT, so 7 AM is safe.)
+- **Run Shortcut** → **Daily Brief Refresh** → Next.
+- **Ask Before Running OFF** → confirm **Don't Ask** → Done.
+
+**4. Set the wallpaper (one-time)**
+- Run the shortcut once so the album has today's images.
+- **Settings → Wallpaper → Add New Wallpaper → Photo Shuffle.**
+- **Use Album** → **Daily Brief**. Set **Shuffle Frequency → On Tap**. Save → set as the pair.
+
+> **Order:** Photo Shuffle picks from the album at random, not in manifest order — so the
+> front page isn't guaranteed first; tapping cycles the day's set. iOS has no native
+> ordered, tap-to-advance wallpaper.
 
 ---
 
 ## Test it now
-On your phone, open the Shortcut and tap the **▶ play** button once. Your lock screen
-should update. If it doesn't, set your current lock screen to a **Photo** wallpaper first
-(not a Photo Shuffle / collection), then try again.
+Run **Daily Brief Refresh** once (▶). Check the **Daily Brief** album fills with today's
+pages, then tap the lock screen to cycle them. If the album doesn't appear under
+**Use Album**, make sure it has at least one photo (run the shortcut first), then re-pick it.
 
 ## Good to know
 - **Public repos get unlimited free Actions minutes.** This job uses ~1–2 min/day.
