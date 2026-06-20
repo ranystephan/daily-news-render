@@ -28,7 +28,8 @@ import feedparser
 # ----------------------------------------------------------------------------
 TIMEZONE = "America/Los_Angeles"     # your local zone (used for the date/time stamp)
 WIDTH, HEIGHT = 1320, 2868           # iPhone 17 Pro Max, in pixels
-CLOCK_ZONE = 0.20                    # top fraction left empty for the iOS clock
+CLOCK_ZONE = 0.29                    # top fraction left empty for the iOS clock
+                                     # (clears the big clock; no widget row reserved)
 OUTPUT = "headlines.png"
 
 # How many items to show per section (tune to taste / fit).
